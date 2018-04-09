@@ -1,0 +1,255 @@
+TEMA 2 PC - SISTEM MONETAR DE TIP BANCOMAT |
+===========================================+
+
+CLIENT
+======
+
+Implementarea clientului:
+-------------------------
+
+- Creez socketurile TCP si UDP le leg la adresa si portul date ca argumente
+- Ma conectez la server pe socketul TCP
+- Adaug socketurile, impreuna cu 0 (identificatorul pentru stdin) in fd_setul cu ajutorul caruia voi multiplexa
+- Cand intru in bucla while, mai intai setez tmp (pe care il voi da ca argument lui select) pentru ca nu vreau ca
+  setul meu sa fie afectat de apelul select
+- Fac apelul select
+- Iau pe rand fiecare fd din fd_set si verific daca a fost "setat" (cu functia FD_ISSET) in tmp. Apoi, am doar 2 cazuri:
+	- Daca am i == tcpsock, atunci mi-a venit un mesaj pe TCP, ceea ce (probabil) inseamna ca am primit mesaj de shut down de la server 
+		- Daca n este 0, atunci inseamna ca conexiunea a fost inchisa fortat si fac exit(1) si scot socketul din lista pe care
+		  fac multiplexarea
+		- Altfel, inseamna ca am primit un mesaj. Verific daca acesta este cu adevarat un mesaj de inchidere. Daca este, atunci
+		  il printez si il scriu in fisier si, de asemenea, anunt utilizatorul ca conexiunea s-a incheiat. Apoi inchid fisierul
+	  	  si golesc lista cu file descriptori si, in final, inchid clientul
+	- Altfel: Inseamna ca am primit o comanda de la tastatura. Citesc ce am primit de la tastatura si apoi retin primele 4 litere intr-o
+	  variabila si le folosesc pentru a imi da seama ce comanda am primit, folosind strcmp
+		- Pentru login: Mai intai verific daca deja am o sesiune deschisa pe clientul curent. Ma folosesc de variabila
+		  is_logged_in pentru a retine asta. Aceasta va fi 0 daca nu am un utilizator logat pe clientul curent, sau 1 daca
+		  am user logat. Deci daca aceasta este 1, inseamna ca am un user logat si dau eroare si abandonez logarea.
+		  Daca is_logged_in este 0, atunci inseamna ca pot loga un user si incep procesul de logare:
+			- Scanez comanda data si retin numarul de card pentru a-l folosi mai tarziu pentru alte comenzi
+			- Trimit la server mesajul asa cum l-am primit de la utilizator
+			- Primesc raspunsul de la server si il analizez:
+				- Extrag caracterul de pe pozitia a 6-a din buffer deoarece in caz de eroare, pe pozitia aceea se va regasi
+				  codul de eroare (3, 4 sau 5 in cazul loginului) sau o litera din mesajul de confirmare, in caz ca logarea
+				  s-a facut cu succes. Deci pot sa imi dau seama daca am primit eroare sau logarea a decurs ok
+				- Daca caracterul extras este diferit de 3, 4 si 5, atunci inseamna ca nu am primit eroare si logarea
+				  s-a facut cu succes. Deci, marchez variabila is_logged_in cu 1 si salvez numarul de card in variabila
+				  logged_in_card (pentru a o folosi in cazul in care se da quit fara a se da logout inainte)
+				- Daca caracterul are valoarea 3, 4 sau 5, atunci nu se modifica variabilele si trec mai departe
+			- Printez mesajul primit de la server si il scriu in fisier
+		- Pentru logout: Verific daca is_logged_in este 0. Daca da, atunci inseamna ca nu am un utilizator logat si nu pot
+		  face logout, asa ca printez erorile si abandonez procesul de logout. Daca este 1, atunci inseamna ca am user logat si
+		  pot sa continui:
+			- Setez is_logged_in la 0, pentru ca urmeaza sa deloghez userul
+			- Apoi creez mesajul care va trebui trimis catre server. Adaug la mesaj numarul de card de pe care
+			  trebuie sa fac logout (pentru ca serverul sa stie ce numar de card se delogheaza)
+			- Trimit mesajul nou obtinut
+			- Primesc raspunsul
+			- Il afisez si il printez in fisier
+		- Pentru listsold: Verific daca is_logged_in este 1. Daca nu este, atunci printez eroarea adecvata. Daca este 1, atunci:
+			- Creez mesajul care va fi trimis la server, adaugand mesajului primit de la user numarul de card pentru care
+			  se face afisarea
+			- Trimit noul mesaj
+			- Primesc raspuns de la server
+			- Afisez si scriu in fisier raspunsul
+		- Pentru getmoney: Verific daca is_logged_in este 1. Daca nu este, atunci printez eroarea adecvata. Daca este 1, atunci:
+			- Creez mesajul care va fi trimis la server, adaugand la mesajul primit de la user numarul de card pentru care
+			  se face extragerea de bani
+			- Trimit noul mesaj
+			- Primesc raspuns de la server
+			- Afisez si scriu in fisier raspunsul
+		- Pentru putmoney: Verific daca is_logged_in este 1. Daca nu este, atunci printez eroarea adecvata. Daca este 1, atunci:
+			- Creez mesajul care va fi trimis la server, adaugand mesajului primit de la user numarul de card pentru care
+			  se face depunerea
+			- Trimit noul mesaj
+			- Primesc raspuns de la server
+			- Afisez si scriu in fisier raspunsul
+		- Pentru unlock:
+			- Creez mesajul care trebuie trimis la server. Incep de la mesajul primit de la tastatura si ii adaug numarul de card
+			  pentru care se face unlock (numarul de card de la ultima incercare de login)
+			- Trimit mesajul prin socketul UDP
+			- Primesc raspunsul si il verific:
+				- Daca este mesajul care cere parola secreta, atunci continuiui cu deblocarea:
+					- Citesc de la tastatura parola secreta data de user
+					- O trimit la loc prin UDP
+					- Primesc raspuns
+					- Printez si scriu in fisier mesajul
+				- Altfel, inseamna ca am primit eroare si o printez si o scriu in fisier
+		- Pentru quit:
+			- Adaug la mesajul primit de la tastatura numarul de card care este logat pe client
+			- Trimit mesajul catre server pentru a il instiinta de faptul ca utilizatorul cu acel numar de card o sa fie deconectat
+			- Anunt userul ca conexiunea s-a incheiat
+			- Inchid fisierul
+			- Golesc lista de toti socketii
+			- Inchid clientul
+
+
+Condificarea mesajelor
+----------------------
+
+client -> server:
+	- login: "login <numar_card> <pin>" (Trimit mesajul ca atare, cum l-am primit de la tastatura)
+	- logout: "logout\n <numar_card_logat>" (Adaug <numar_card_logat> la mesajul primit de la tastatura)
+	- listsold: "listsold\n <numar_card_logat>" (Adaug <numar_card_logat> la mesajul primit de la tastatura)
+	- getmoney: "getmoney <suma>\n <numar_card_logat>" (Adaug <numar_card_logat> la mesajul primit de la tastatura)
+	- putmoney: "putmoney <suma>\n <numar_card_logat>" (Adaug <numar_card_logat> la mesajul primit de la tastatura)
+	- unlock: "unlock\n <numar_card>" (Adaug <numar_card> la mesajul primit de la tastatura. <numar_card> este numarul de card de la
+										ultima incercare de logare)
+	- quit: "quit\n <numar_card_logat>" (Adaug <numar_card_logat> la mesajul primit de la tastatura)
+
+server -> client:
+	Primesc de la server mesajele exact asa cum trebuie afisate/scrie in fisier, nu mai trebuie prelucrate.
+
+
+
+SERVER
+======
+
+Descrierea structurii folosite pentru reprezentarea unui utilizator
+-------------------------------------------------------------------
+
+	- Prenumele
+	- Numele
+	- Numarul de card
+	- Pinul
+	- Parola secreta
+	- Soldul
+	- card_block -> indica daca cardul userului respectiv este blocat sau nu. 0 daca nu este blocat, 1 daca este blocat
+	- active_session -> indica daca clientul este autentificat pe vreun client (daca are o sesiune activa). 0 daca nu am sesiune activa
+	  pentru acest user, 1 daca am sesiune activa
+	- wrong count -> numarul de dati cand pinul a fost introdus gresit. La 3 introduceri gresite cardul se blocheaza. In momentul
+	  deblocarii, acest camp redevine 0
+
+
+Implementarea serverului
+------------------------
+
+- Citesc datele din fisier
+- Creez socketurile TCP si UDP si le leg la adresa serverului (adresa mea) si portul primit ca argument
+- Fac listen pe socketul TCP. Astept conexiuni noi
+- Adaug cei doi socketi, impreuna cu 0 (file descriptorul pentru stdin) in setul pe care voi multiplexa
+- Intru in bucla. Pun in tmp valorile din setul meu, pentru a nu afecta setul original prin apelul select
+- Fac apelul select
+- Fac un for pe toate fd-urile din set si le consider doar pe cele care sunt "setate" (verific cu FD_ISSET)
+- Aici o sa am 4 cazuri posibile:
+	- Daca i == udpsock, atunci inseamna ca am primit ceva pe socketul UDP. O sa fac recvfrom ca sa preiau mesajul, apoi:
+		- Iau primele 4 litere pentru a verifica daca am primit comanda unlock. Daca am primit unlock, atunci:
+			- Preiau numarul de card dat prin mesaj
+			- Fac for peste toti utilizatorii. Daca gasesc un user cu nr de card salvat in variabila, atunci:
+				- Setez variabila exists la 1, pentru a marca faptul ca am gasit user ca nr de card dat
+				- Daca cardul nu este blocat, atunci scriu in buffer eroarea si abandonez restul procesului de unlock
+				- Daca cardul este blocat, continui:
+					- Trimit catre client o cerere pentru a imi trimite parola secreta
+					- Primesc raspunsul si verific daca parola secreta data coincide cu cea a userului respectiv:
+						- Daca parola secreta coincide, atunci resetez wrong_count si card_block la 0 si pun in buffer mesajul de succes
+						- Daca parola secreta nu coincide, atunci nu modific variabilele si pun mesajul de eroare in buffer
+			- Daca atunci cand ies din for, exists este 0 atunci inseamna ca nu exista numarul de card dat serverului. Atunci pun
+			  eroarea in buffer
+		- Trimit rasunsul final din buffer catre client
+		- Fac continue pentru a trece la urmatoarea iteratie din for si pentru a nu intra din greseala si in TCP (daca am intrat intr-un
+		  if, atunci nu mai e nevoie sa trec si prin celelalte if-uri)
+	- Daca i == tcpsock, atunci inseamna ca mi-a venit o conexiune noua pe socketul pe care am facut listen. Voi face accept pentru a
+	  raspunde cererii de conectare si voi adauga file descriptorul in setul meu.
+	- Daca i == 0, atunci inseamna ca am primit ceva de la tastatura (pe partea serverului), deci:
+		- Citesc de la tastatura
+		- Din ce am citit, voi lua primele 4 litere, pentru a imi da seama daca am primit comanda quit de la tastatura
+		- Daca nu este quit, ignor si trec mai departe
+		- Daca este quit, atunci:
+			- Pun in buffer mesajul care va trebui trimis la toti clientii
+			- Iau e rand toate fd-urile si le trimit mesajul de inchidere, inchid conexiunea pe socketul respectiv si il scot din lista
+			- Dupa ce am terminat for-ul, inchid serverul
+	- Altfel, inseamna ca am primit ceva pe unul din socketii pe care comunic cu clientii prin TCP, deci:
+		- Primesc mesajul de pe socket cu recv
+		- Daca lungimea mesajului primit este 0, inseamna ca socketul s-a inchis fortat si voi inchide conexiunea cu el si il voi
+		  scoate din lista
+		- Altfel, inseamna ca am primit un mesaj
+		- Iau primele 4 litere pentru a imi da seama daca am primit quit de la server
+			- Daca am primit quit, atunci:
+				- Preiau numarul de card care se afla codificat in mesaj
+				- Iau pe rand toti userii pentru a il gasi pe cel cu acel numar de card
+				- Daca l-am gasit atunci ii setez active_session la 0, pentru ca daca se da quit din client si nu s-a facut logout,
+				  userul tot trebuie delogat
+				- Inchid socketul respectiv
+				- Il scot din lista de multiplexare
+			- Altfel, inseamna ca am primit o comanda diferita de quit, deci:
+				- Voi apela functia de procesare a comenzilor (detaliata mai jos), care imi va modifica bufferul cu mesajul potrivit
+				  situatiei
+				- Trimit noul buffer catre socketul care mi-a dat comanda
+
+Functia de procesare a comenzilor
+---------------------------------
+
+- Salvez primele 4 litere din buffer pentru a imi da seama ce comanda am (4 litere sunt destul pentru a diferentia)
+- Daca am login:
+	- Preiau numarul de card si pinul din mesajul primit de la client
+	- Apoi fac un for peste toti clientii pentru a cauta numarul de card primit:
+		- Daca deja l-am gasit (exists == 1), atunci ies din for, altfel continui
+		- Daca numarul de card de la iteratia curenta coincide cu cel primit de la client, atunci inseamna ca am gasit clientul
+		  cautat:
+			- Fac variabila exists 1, pentru a marca faptul ca l-am gasit
+			- Daca campul active_session al userulu este 1, atunci inseamna ca deja exista o sesiune activa pentru userul
+			  respectiv, in alt client, deci voi pune eroarea in buffer
+			- Daca active_session este 0, atunci pot continua
+			- Verific daca pinul dat corespunde cu cel real si faptul ca cardul nu este blocat
+			- Daca ambele conditii sunt indeplinite:
+				- Pun in buffer mesajul de autentificare cu succes
+				- Resetez wrong_count la 0 si setez active_session la 1
+			- Altfel, pun in buffer mesajul de pin gresit si incrementez wrong_count
+			- Daca wrong_count este 3, blochez cardul (setez card_block la 1)
+			- Daca cardul este blocat (card_block == 1), atunci pun in buffer mesajul de card blocat
+	- Daca am iesit din for si exists este 0, inseamna ca nu am gasit un user cu numarul de card dat de client, deci voi pune
+	  in buffer eroarea de nr de card inexistent
+- Daca am logout:
+	- Preiau numarul de card din mesajul primit de la client
+	- Iau pe rand toti userii, printr-un for:
+		- Daca am gasit userul, resetez active_session si wrong_count la 0
+	- Pun mesajul de deconectare in buffer
+- Daca am listsold:
+	- Iau numarul de card din mesaul de la client
+	- Iau pe rand userii, cu un for:
+		- Daca am gasit userul cu numarul de card dat
+			- Pun in buffer mesajul care imi afiseaza soldul
+- Daca am getmoney
+	- Iau numarul de card si suma de bani din mesajul primit
+	- Fac un for pentru a gasii userul cu numarul de card dat
+	- Cand l-am gasit, atunci:
+		- Verific daca suma este multiplu de 10. Daca este, continui, daca nu, pun eroarea in buffer
+		- Verific daca userul are fonuri suficiente. Daca are, continui, daca nu, pun eroarea in buffer
+		- Daca am trecut de conditiile de mai sus, atunci scad suma din soldul clientului si pun in buffer mesajul de succes
+- Daca am putmoney
+	- Iau numarul de card si suma de bani din mesajul primit
+	- Fac un for ca sa gasesc userul caruia trebuie sa ii depun banii
+	- Cand l-am gasit:
+		- Depun banii
+		- Pun in buffer mesajul de succes
+- In momentul in care ies din functia de procesare, buffer va contine mesajul de raspuns adecvat pentru comanda data
+
++====+
+|NOTE|
++====+
+- AM PORNIT DE LA SCHELETUL DE COD DIN LAB 8
+- Am implementat blocarea cardului in felul urmator:
+	Cardul se blocheaza in momentul in care am 3 introduceri de pin gresite NU NEAPARAT CONESCUTIVE (adica nu neaparat date
+	unele dupa altele).
+
+	Exemplu1:
+		Am 2 terminale care incearca sa se autentifice cu datele aceliuasi user.
+		Terminalul1: login 456123 8795 -> pin gresit => wrong_count = 1
+		Terminalul2: login 456123 8795 -> pin gresit => wrong_count = 2
+		Terminalul1: login 456123 8777 -> pin gresit => wrong_count = 3 => card_block = 1
+		Terminalul2: login 456123 8799 -> card blocat (pinul este bun, dar cardul este blocat)
+
+	Exemplu2:
+		Primul user greseste pinul de 2 ori, dupa aceea se autentifica alt user, apoi primul user greseste iar pinul si i se blocheaza
+		cardul (toate pe un singur terminal).
+		login 456123 8795 -> pin gresit => wrong_count = 1
+		login 456123 8777 -> pin gresit => wrong_count = 2
+		login 111789 8997 -> welcome Ionescu Georgeta
+		logout
+		login 456123 8794 -> pin gresit => wrong_count = 3 => card_block = 1
+		login 456123 8799 -> card blocat (pinul este bun, dar cardul este blocat)
+
+	Am atasat fisiere log pentru ambele exemple.
+
+- Am scris in logurile clientilor mesajul afisat in momentul in care se primeste quit in server
+- Comentariile, codul si README-ul sunt aliniate cu Tab Width = 4

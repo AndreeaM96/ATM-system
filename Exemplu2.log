@@ -1,0 +1,14 @@
+login 456123 8795
+ATM> -3 : Pin gresit
+login 456123 8777
+ATM> -3 : Pin gresit
+login 111789 8997
+ATM> Welcome Ionescu Georgeta
+logout
+ATM> Deconectare de la bancomat
+login 456123 8795
+ATM> -5 : Card blocat
+login 456123 8799
+ATM> -5 : Card blocat
+quit
+Conexiunea s-a incheiat
